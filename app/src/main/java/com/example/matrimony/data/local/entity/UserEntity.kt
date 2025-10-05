@@ -8,7 +8,7 @@ import androidx.room.PrimaryKey
     tableName = "users",
     indices = [
         Index(value = ["apiOrderIndex"]),
-        Index(value = ["lastUpdatedEpochMs"]) // retained for potential freshness checks
+        Index(value = ["lastUpdatedEpochMs"])
     ]
 )
 data class UserEntity(
@@ -21,6 +21,6 @@ data class UserEntity(
     val country: String,
     val imageLargeUrl: String,
     val imageThumbUrl: String,
-    val decision: String, // PENDING, ACCEPTED, DECLINED
+    val decision: String,
     val lastUpdatedEpochMs: Long
 )

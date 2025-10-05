@@ -101,7 +101,6 @@ class MatchesActivity : AppCompatActivity() {
             }
         }
 
-		// Observe connectivity and show a brief offline message when disconnected
 		lifecycleScope.launch {
 			repeatOnLifecycle(Lifecycle.State.STARTED) {
 				networkMonitor.isOnline.observe(this@MatchesActivity) { online ->
