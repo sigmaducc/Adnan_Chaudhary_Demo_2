@@ -136,13 +136,6 @@ Building & Running
 - Min SDK 24, target SDK 36
 - Run the `app` module. Entry: `MainActivity` → launches `MatchesActivity`.
 
-Tests
-- Unit tests
-  - Repository: verifies network→DB upsert and paging using mocked service and DAO
-  - ViewModel: verifies decision updates reflect in the list
-- Instrumented tests
-  - Room DAO: insert, update decision, observe ordering
-
 Decision persistence policy
 - Never overwrite a local decision on network refresh.
 - RemoteMediator merges incoming rows with existing rows by `id` and keeps previous `decision` and `apiOrderIndex`, then upserts the merged list.

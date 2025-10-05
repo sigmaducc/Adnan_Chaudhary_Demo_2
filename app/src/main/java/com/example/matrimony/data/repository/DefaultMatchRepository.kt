@@ -15,6 +15,7 @@ import com.example.matrimony.domain.model.MatchDecision
 import com.example.matrimony.domain.model.User
 import com.example.matrimony.domain.repository.MatchRepository
 import com.example.matrimony.core.Constants
+import com.example.matrimony.core.PagingConfigProvider
 import com.example.matrimony.data.local.database.AppDatabase
 import com.example.matrimony.data.paging.UsersRemoteMediator
 import kotlinx.coroutines.CoroutineDispatcher
@@ -30,13 +31,7 @@ class DefaultMatchRepository(
     @OptIn(ExperimentalPagingApi::class)
     override fun pagedUsers(): LiveData<PagingData<User>> =
         Pager(
-            config = PagingConfig(
-                pageSize = Constants.PAGE_SIZE,
-                initialLoadSize = Constants.PAGING_INITIAL_LOAD_SIZE,
-                prefetchDistance = Constants.PAGING_PREFETCH_DISTANCE,
-                enablePlaceholders = false,
-                maxSize = Constants.PAGING_MAX_SIZE
-            ),
+            config = PagingConfigProvider.create(),
             remoteMediator = UsersRemoteMediator(
                 db = db,
                 service = service,
