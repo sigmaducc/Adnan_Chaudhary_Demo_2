@@ -1,4 +1,4 @@
-Matrimony (XML, Offline-first)
+**Matrimony (XML, Offline-first)**
 
 Overview
 Android app that lists potential matches using RandomUser API with an offline-first architecture. The UI is built with XML (no Compose). Data is cached in Room and the list is powered by Paging 3 with a RemoteMediator. Users can Accept/Decline; decisions persist locally across refreshes.
