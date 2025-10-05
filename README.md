@@ -1,7 +1,7 @@
 Matrimony (XML, Offline-first)
 
 Overview
-Android app that lists potential matches using RandomUser API with an offline-first architecture. The UI is built with XML (no Compose). Data is cached in Room; UI observes DB and supports pull-to-refresh and endless scroll. Users can Accept/Decline; decisions persist locally.
+Android app that lists potential matches using RandomUser API with an offline-first architecture. The UI is built with XML (no Compose). Data is cached in Room and the list is powered by Paging 3 with a RemoteMediator. Users can Accept/Decline; decisions persist locally across refreshes.
 
 Tech Stack
 - UI: XML, RecyclerView, Material 3, SwipeRefreshLayout
@@ -9,21 +9,22 @@ Tech Stack
 - Concurrency: Kotlin Coroutines
 - Networking: Retrofit, OkHttp (logging)
 - Caching: Room
-- Images: Glide (via ImageLoader abstraction planned)
-- Architecture: Clean (UI → UseCases → Repository → Data sources)
+- Images: Glide (via an ImageLoader abstraction)
+- Architecture: Clean-ish (UI → UseCases → Repository → Data sources)
+- Pagination: Paging 3 (LiveData + RemoteMediator + Room PagingSource)
 
 Features
-- Offline-first: UI renders from Room; network refresh updates DB.
-- Pagination: Auto-load next page when nearing list end.
-- Accept/Decline decisions stored locally and preserved on refresh.
-- Error handling: Snackbar with retry; single-consume events.
-- LiveData presentation with a single UiState for the screen.
+- Offline-first: UI renders from Room; network updates DB via RemoteMediator.
+- Pagination: Infinite scroll with Paging 3, including proper append/refresh handling.
+- Decisions: Accept/Decline writes persist locally and are preserved on refresh.
+- Connectivity awareness: Brief toast when offline, continue showing cached results.
+- Error handling: Snackbar with retry from the paging footer on load errors.
 
 Module Structure
 - `data/` remote (Retrofit DTO/API), local (Room), repository implementation
 - `domain/` models, mappers (Entity→Domain), use cases
-- `presentation/` activities, adapters, viewmodels, UiState, Event
-- `di/` modules for Network, Database, Repository, Dispatchers
+- `presentation/` activities, adapters, viewmodels, paging load-state footer
+- `di/` modules for Network, Database, Repository, Dispatchers, ImageLoader, System services
 - `core/` app-wide constants and types
 
 API
@@ -33,7 +34,7 @@ API
 
 High-Level Design (HLD)
 ---------------------------------
-- Layers: UI (Activities/Adapters/XML) → UseCases → Repository → Data (Room + Retrofit).
+- Layers: UI (Activities/Adapters/XML) → UseCases → Repository → Data (Room + Retrofit + Paging 3).
 - Single Source of Truth: Room. UI always renders from DB; network only updates DB.
 - DI: Hilt provides Retrofit, Room, Repository, Dispatchers, and UseCases.
 - Images: Glide for efficient image loading and caching.
@@ -44,22 +45,31 @@ flowchart TD
   subgraph UI
     A[MatchesActivity]
     B[MatchAdapter]
+    C[MatchLoadStateAdapter]
   end
   subgraph Domain
     U1[ObserveMatchesUseCase]
-    U2[RefreshMatchesUseCase]
-    U3[LoadMoreMatchesUseCase]
     U4[UpdateDecisionUseCase]
   end
   subgraph Data
     R[(Room\nusers table)]
+    K[(Room\nremote_keys)]
     S[RandomUserService\nRetrofit]
     Repo[MatchRepository]
+    RM[UsersRemoteMediator]
   end
-  A -->|observe LiveData| U1 --> Repo --> R
-  A -->|refresh/loadMore| U2 & U3 --> Repo --> S
-  S --> Repo --> R
-  A -->|accept/decline| U4 --> Repo --> R
+  A -- subscribes to --> U1
+  U1 -- emits LiveData to --> A
+  U1 -- requests pages from --> Repo
+  Repo -- exposes PagingSource to --> R
+  Repo -- coordinates fetch with --> RM
+  RM -- calls GET /api with params --> S
+  S -- returns results + info --> RM
+  RM -- merges decisions, computes apiOrderIndex, upserts --> R
+  RM -- writes paging state --> K
+  A -- sends Accept/Decline to --> U4
+  U4 -- updates decision in --> Repo
+  Repo -- writes decision to --> R
 ```
 
 Offline-first data flow
@@ -68,64 +78,58 @@ sequenceDiagram
   participant UI as MatchesActivity
   participant UC as UseCase
   participant Repo as Repository
+  participant Med as RemoteMediator
   participant API as RandomUser API
   participant DB as Room
-  UI->>UC: Refresh()
-  UC->>Repo: refresh(force=true)
-  Repo->>API: GET /api?results=10&page=1&seed=matrimony-seed
-  API-->>Repo: results + info
-  Repo->>DB: SELECT * FROM users WHERE id IN (resultIds)
-  DB-->>Repo: existing users
-  Repo->>DB: UPSERT merge(incoming, existing.decisions)
-  DB-->>UI: Flow<List<User>> emits new list
+  UI->>UC: Observe()
+  UC->>Repo: pagedUsers()
+  Repo->>DB: PagingSource()
+  Repo->>Med: UsersRemoteMediator
+  Med->>API: GET /api?results=10&page=n&seed=matrimony-seed
+  API-->>Med: results + info
+  Med->>DB: merge decisions + upsert users
+  Med->>DB: upsert remote_keys for paging
+  DB-->>UI: PagingData<User> emits pages
 ```
 
 
 Low-Level Design (LLD)
 ---------------------------------
 - Data model
-  - `UserEntity(id, fullName, age, city, state, country, imageLargeUrl, imageThumbUrl, decision, lastUpdatedEpochMs)`
+  - `UserEntity(id, fullName, age, city, state, country, imageLargeUrl, imageThumbUrl, decision, lastUpdatedEpochMs, apiOrderIndex)`
   - `MatchDecision = PENDING|ACCEPTED|DECLINED`
   - Domain `User` mirrors entity but with typed `decision`.
 
 - DAO API
-  - `observeAll(): Flow<List<UserEntity>>`
+  - `pagingSource(): PagingSource<Int, UserEntity>`
   - `upsertAll(users: List<UserEntity>)`
   - `updateDecision(userId: String, decision: String)`
   - `getByIds(ids: List<String>): List<UserEntity>`
-  - `clearAll()`
+  - `getLastByOrder(): UserEntity?`
 
 - Network
   - `RandomUserService.getUsers(results, page, seed): Response<RandomUserResponse>`
-  - DTO → Entity mapper: `ResultDto.toEntity(nowEpochMs)`
+  - DTO → Entity mapper: `ResultDto.toEntity(nowEpochMs, apiOrderIndex)`
   - `RandomUserResponse(results: List<ResultDto>?, info: InfoDto?)`
 
 - Repository core logic (simplified)
 ```kotlin
-suspend fun refresh(force: Boolean) {
-  val resp = api.getUsers(results=PAGE_SIZE, page=1, seed=DEFAULT_SEED)
-  if (!resp.isSuccessful) return
-  val incoming = (resp.body()?.results ?: emptyList()).mapNotNull { it.toEntity(now) }
-  val existingById = dao.getByIds(incoming.map { it.id }).associateBy { it.id }
-  val merged = incoming.map { e -> e.copy(decision = existingById[e.id]?.decision ?: e.decision) }
-  if (force) dao.clearAll()
-  dao.upsertAll(merged)
-}
+@OptIn(ExperimentalPagingApi::class)
+override fun pagedUsers(): LiveData<PagingData<User>> =
+  Pager(
+    config = PagingConfig(pageSize = PAGE_SIZE, enablePlaceholders = false),
+    remoteMediator = UsersRemoteMediator(db, service, seed = DEFAULT_SEED),
+    pagingSourceFactory = { userDao.pagingSource() }
+  ).liveData.map { it.map { e -> e.toDomain() } }
 ```
 
 - UseCases
-  - `ObserveMatchesUseCase()` → `Flow<List<User>>` from Room
-  - `RefreshMatchesUseCase(force)` → triggers refresh
-  - `LoadMoreMatchesUseCase()` → fetches next page and upserts
+  - `ObserveMatchesUseCase()` → `LiveData<PagingData<User>>`
   - `UpdateDecisionUseCase(id, decision)` → updates entity
 
-- ViewModel state
-  - `UiState(isLoading: Boolean, users: List<User>, errorEvent: Event<String>?)`
-  - Exposed as `LiveData<UiState>`; Activity observes and renders.
-
-State Management
-- `UiState(isLoading, users, errorEvent)` exposed as `LiveData<UiState>`.
-- Snackbar is shown on error event; retry triggers `refresh()`.
+UI Status chips
+- Accepted: green chip background
+- Declined: red chip background
 
 Building & Running
 - Android Studio Jellyfish or later
@@ -135,26 +139,22 @@ Building & Running
 Tests
 - Unit tests
   - Repository: verifies network→DB upsert and paging using mocked service and DAO
-  - ViewModel: verifies UiState transitions on refresh/loadMore and decision updates
+  - ViewModel: verifies decision updates reflect in the list
 - Instrumented tests
   - Room DAO: insert, update decision, observe ordering
 
 Decision persistence policy
 - Never overwrite a local decision on network refresh.
-- When refreshing, fetch current page → merge with existing rows by `id` → keep previous `decision` → upsert merged list.
+- RemoteMediator merges incoming rows with existing rows by `id` and keeps previous `decision` and `apiOrderIndex`, then upserts the merged list.
 - Accept/Decline writes to DB immediately; UI reflects change instantly and persists across app restarts.
 
 Known limitations
-- Manual paging, not Paging 3.
 - Server is read-only (RandomUser), so decisions are local-only.
 - Minimal error categories; message is generic.
-
-
-
-string resource
-glide
-network call
-logging
-DI for injecting DB in DefaultMatcherRepository
-view bindings
-randomize the seed on every start
+Next steps / Enhancements
+- Randomize the API `seed` on each fresh app start (persist choice for a session).
+- Add visual polish: skeleton placeholders, error/empty states, and list item states.
+- Add filter/sort controls (age range, location) on top of the paged list.
+- Add swipe gestures for accept/decline with undo.
+- Introduce `Detekt`/`Ktlint` and a CI job to keep code quality high.
+- Replace placeholder image with a proper avatar placeholder and crossfade.

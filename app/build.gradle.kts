@@ -37,6 +37,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -78,6 +79,9 @@ dependencies {
 
     // Paging 3
     implementation(libs.androidx.paging.runtime)
+
+    // Logging
+    implementation(libs.timber)
 
     // Glide
     implementation(libs.glide)

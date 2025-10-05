@@ -22,7 +22,6 @@ class UsersRemoteMediator(
 ) : RemoteMediator<Int, UserEntity>() {
 
     override suspend fun initialize(): InitializeAction {
-        // Ensure a fresh sync on first attach so remote keys are populated
         return InitializeAction.LAUNCH_INITIAL_REFRESH
     }
 
@@ -69,7 +68,6 @@ class UsersRemoteMediator(
                 val userDao = db.userDao()
                 val keysDao = db.remoteKeysDao()
                 if (loadType == LoadType.REFRESH) {
-                    // Clear keys first so subsequent loads recompute from page 1
                     keysDao.clearRemoteKeys()
                 }
 
@@ -77,13 +75,14 @@ class UsersRemoteMediator(
                 val existing = userDao.getByIds(ids).associateBy { it.id }
                 val merged = incoming.map { inc ->
                     val prev = existing[inc.id]
-                    if (prev != null) inc.copy(decision = prev.decision) else inc
+                    if (prev != null) {
+                        inc.copy(
+                            decision = prev.decision,
+                            apiOrderIndex = prev.apiOrderIndex
+                        )
+                    } else inc
                 }
 
-                if (loadType == LoadType.REFRESH) {
-                    // Replace users to avoid duplicate rows but preserve decisions via merge above
-                    userDao.clearAll()
-                }
                 userDao.upsertAll(merged)
 
                 val prevKey = if (page == 1) null else page - 1
@@ -105,7 +104,7 @@ class UsersRemoteMediator(
         if (lastItemFromState != null) {
             return db.remoteKeysDao().remoteKeysUserId(lastItemFromState.id)
         }
-        // Fallback to DB when PagingState has no last item (cold start or after invalidation)
+
         val lastFromDb = db.userDao().getLastByOrder()
         return lastFromDb?.let { db.remoteKeysDao().remoteKeysUserId(it.id) }
     }

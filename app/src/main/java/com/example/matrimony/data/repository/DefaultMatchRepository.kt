@@ -1,5 +1,7 @@
 package com.example.matrimony.data.repository
 
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.map
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -16,8 +18,6 @@ import com.example.matrimony.core.Constants
 import com.example.matrimony.data.local.database.AppDatabase
 import com.example.matrimony.data.paging.UsersRemoteMediator
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class DefaultMatchRepository(
@@ -28,13 +28,14 @@ class DefaultMatchRepository(
 ) : MatchRepository {
 
     @OptIn(ExperimentalPagingApi::class)
-    override fun pagedUsers(): Flow<PagingData<User>> =
+    override fun pagedUsers(): LiveData<PagingData<User>> =
         Pager(
             config = PagingConfig(
                 pageSize = Constants.PAGE_SIZE,
-                initialLoadSize = Constants.PAGE_SIZE,
-                prefetchDistance = 3,
-                enablePlaceholders = false
+                initialLoadSize = Constants.PAGING_INITIAL_LOAD_SIZE,
+                prefetchDistance = Constants.PAGING_PREFETCH_DISTANCE,
+                enablePlaceholders = false,
+                maxSize = Constants.PAGING_MAX_SIZE
             ),
             remoteMediator = UsersRemoteMediator(
                 db = db,
@@ -42,7 +43,7 @@ class DefaultMatchRepository(
                 seed = Constants.DEFAULT_SEED
             ),
             pagingSourceFactory = { userDao.pagingSource() }
-        ).flow.map { paging -> paging.map { it.toDomain() } }
+        ).liveData.map { paging -> paging.map { it.toDomain() } }
 
     override suspend fun updateDecision(userId: String, decision: MatchDecision) {
         withContext(context = ioDispatcher) {

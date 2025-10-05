@@ -6,4 +6,6 @@
     <color name="colorSurface">#FFFBFE</color>
     <color name="colorOnSurface">#1C1B1F</color>
     <color name="black_12">#1F000000</color>
+    <color name="chip_accepted">#4CAF50</color>
+    <color name="chip_declined">#D32F2F</color>
 </resources>

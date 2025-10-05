@@ -1,11 +1,9 @@
 package com.example.matrimony.presentation.main
 
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.asLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
-import androidx.paging.cachedIn
+import androidx.lifecycle.LiveData
 import com.example.matrimony.domain.model.MatchDecision
 import com.example.matrimony.domain.model.User
 import com.example.matrimony.domain.usecase.ObserveMatchesUseCase
@@ -20,8 +18,7 @@ class MatchViewModel @Inject constructor(
     private val updateDecisionUseCase: UpdateDecisionUseCase
 ) : ViewModel() {
 
-    val pagedUsers: kotlinx.coroutines.flow.Flow<PagingData<User>> =
-        observeMatches().cachedIn(viewModelScope)
+    val pagedUsers: LiveData<PagingData<User>> = observeMatches()
 
     fun updateDecision(userId: String, decision: MatchDecision) {
         viewModelScope.launch {
